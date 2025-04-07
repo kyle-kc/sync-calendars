@@ -153,9 +153,7 @@ function setEventAttributesIfNeeded(targetEvent, sourceEvent, sourceCalendar, de
   setIfNeeded(targetEvent.setTitle, () => targetEvent.getTitle(), title);
   setIfNeeded(targetEvent.setTransparency, () => targetEvent.getTransparency(), sourceEvent.getTransparency());
   setIfNeeded(targetEvent.setVisibility, () => targetEvent.getVisibility(), CalendarApp.Visibility.DEFAULT);
-  if ([...targetEvent.getEmailReminders(), ...targetEvent.getPopupReminders(), ...targetEvent.getSmsReminders()].length > 0) {
-    callWithRetryAndExponentialBackoff(targetEvent.removeAllReminders);
-  }
+  callWithRetryAndExponentialBackoff(targetEvent.removeAllReminders);  // the get methods don't actually return the correct data for this, so we just remove all reminders to be safe
 }
 
 function createOrUpdateBufferEvent(primaryCalendar, previouslyCreatedEvents, event, bufferType, secondaryCalendar) {
