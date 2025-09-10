@@ -3,6 +3,7 @@ const PRIMARY_CALENDAR_ID = "YOUR_CALENDAR_ID";  // probably your email
 const SECONDARY_CALENDAR_IDS = ["OTHER_CALENDAR_1", "OTHER_CALENDAR_2"]; // probably other emails
 
 const DAYS_LOOKAHEAD = 365;
+const STAGING_TITLE_PREFIX = "[STAGING]";
 const SCRIPT_ID_TAG_KEY = "autoCreatedByScriptId";
 const ORIGINAL_CALENDAR_ID_TAG_KEY = "originalCalendarId";
 const ORIGINAL_EVENT_ID_TAG_KEY = "originalEventId";
@@ -70,51 +71,42 @@ function xyzToLab(xyz) {
   return [(116 * y) - 16, 500 * (x - y), 200 * (y - z)];
 }
 
-function colorDistance(rgb1, rgb2) {
-  return Math.sqrt(
-    Math.pow(rgb1[0] - rgb2[0], 2) +
-    Math.pow(rgb1[1] - rgb2[1], 2) +
-    Math.pow(rgb1[2] - rgb2[2], 2)
-  );
-}
-
 function deltaE76(lab1, lab2) {
-  return Math.sqrt(
-    Math.pow(lab1[0] - lab2[0], 2) +
-    Math.pow(lab1[1] - lab2[1], 2) +
-    Math.pow(lab1[2] - lab2[2], 2)
+  return Math.hypot(
+    lab1[0] - lab2[0],
+    lab1[1] - lab2[1],
+    lab1[2] - lab2[2]
   );
 }
 
-function getClosestEventColor(hesCode) {
-  if (!hexCodeToClosestEventColorCache.has(hesCode)) {
-    let targetLab = xyzToLab(rgbToXyz(hexToRgb(hesCode)));
-    let closestColor = null;
-    let minDistance = Number.MAX_VALUE;
+function getClosestEventColor(hexCode) {
+  if (!hexCodeToClosestEventColorCache.has(hexCode)) {
+    let closestColor, minDistance = Number.MAX_VALUE;
 
     EVENT_COLORS_TO_HEX_CODES.forEach((hexColor, eventColor) => {
-      let colorLab = xyzToLab(rgbToXyz(hexToRgb(hexColor)));
-      let distance = deltaE76(targetLab, colorLab);
+      const distance = deltaE76(xyzToLab(rgbToXyz(hexToRgb(hexCode))), xyzToLab(rgbToXyz(hexToRgb(hexColor))));
       if (distance < minDistance) {
         minDistance = distance;
         closestColor = eventColor;
       }
     });
 
-    hexCodeToClosestEventColorCache.set(hesCode, closestColor);
+    hexCodeToClosestEventColorCache.set(hexCode, closestColor);
   }
-  return hexCodeToClosestEventColorCache.get(hesCode);
+  return hexCodeToClosestEventColorCache.get(hexCode);
 }
 
 function callWithRetryAndExponentialBackoff(apiFunction) {
   let numberOfTries = 0;
-
   while (true) {
     try {
       return apiFunction();
     } catch (exception) {
-      if (exception.message.includes("You have been creating or deleting too many calendars or calendar events in a short time. Please try again later.") && numberOfTries <= MAX_RETRIES) {
-        Utilities.sleep(INITIAL_BACKOFF_MILLISECONDS * Math.pow(2, numberOfTries));
+      if (
+        exception.message.includes("You have been creating or deleting too many calendars") &&
+        numberOfTries <= MAX_RETRIES
+      ) {
+        Utilities.sleep(INITIAL_BACKOFF_MILLISECONDS * 2 ** numberOfTries);
         numberOfTries++;
       } else {
         throw exception;
@@ -122,9 +114,8 @@ function callWithRetryAndExponentialBackoff(apiFunction) {
     }
   }
 }
-
 function setIfNeeded(setMethod, getMethod, newValue) {
-  currentValue = getMethod()
+  const currentValue = getMethod();
   if ((currentValue || newValue) && currentValue !== newValue) {
     callWithRetryAndExponentialBackoff(() => setMethod(newValue));
   }
@@ -150,7 +141,6 @@ function setEventAttributesIfNeeded(targetEvent, sourceEvent, sourceCalendar, de
   setIfNeeded(targetEvent.setGuestsCanModify, () => targetEvent.guestsCanModify(), false);
   setIfNeeded(targetEvent.setGuestsCanSeeGuests, () => targetEvent.guestsCanSeeGuests(), false);
   setIfNeeded(targetEvent.setLocation, () => targetEvent.getLocation(), location);
-  setIfNeeded(targetEvent.setTitle, () => targetEvent.getTitle(), title);
   setIfNeeded(targetEvent.setTransparency, () => targetEvent.getTransparency(), sourceEvent.getTransparency());
   setIfNeeded(targetEvent.setVisibility, () => targetEvent.getVisibility(), CalendarApp.Visibility.DEFAULT);
   callWithRetryAndExponentialBackoff(targetEvent.removeAllReminders);  // the get methods don't actually return the correct data for this, so we just remove all reminders to be safe
@@ -170,7 +160,7 @@ function createOrUpdateBufferEvent(primaryCalendar, previouslyCreatedEvents, eve
 
   let bufferEvent;
   if (bufferEventIndex === -1) {
-    bufferEvent = callWithRetryAndExponentialBackoff(() => primaryCalendar.createEvent(bufferEventTitle, bufferEventStartTime, bufferEventEndTime, {
+    bufferEvent = callWithRetryAndExponentialBackoff(() => primaryCalendar.createEvent(`${STAGING_TITLE_PREFIX} ${bufferEventTitle}`, bufferEventStartTime, bufferEventEndTime, {
       description: null,
       location: null,
     }));
@@ -185,6 +175,18 @@ function createOrUpdateBufferEvent(primaryCalendar, previouslyCreatedEvents, eve
 
   setStartAndEndTimesIfNeeded(bufferEvent.setTime, bufferEvent.getStartTime, bufferEvent.getEndTime, bufferEventStartTime, bufferEventEndTime);
   setEventAttributesIfNeeded(bufferEvent, event, secondaryCalendar, null, null, bufferEventTitle);
+  setIfNeeded(bufferEvent.setTitle, () => bufferEvent.getTitle(), bufferEventTitle);
+}
+
+function cleanUpStagingEvents(primaryCalendar, today, endDate) {
+  const stagedEvents = primaryCalendar
+    .getEvents(today, endDate)
+    .filter(event => event.getTitle().startsWith(STAGING_TITLE_PREFIX));
+
+  for (const event of stagedEvents) {
+    console.warn(`Deleting orphaned staged event: ${event.getTitle()} (${event.getId()})`);
+    callWithRetryAndExponentialBackoff(() => event.deleteEvent());
+  }
 }
 
 function main() {
@@ -202,36 +204,44 @@ function main() {
 
     const primaryCalendar = callWithRetryAndExponentialBackoff(() => CalendarApp.getCalendarById(PRIMARY_CALENDAR_ID));
 
+    cleanUpStagingEvents(primaryCalendar, today, endDate);
+
     const previouslyCreatedEvents = callWithRetryAndExponentialBackoff(() => primaryCalendar.getEvents(today, endDate)).filter(event => event.getTag(SCRIPT_ID_TAG_KEY) === SCRIPT_ID)
 
-    for (secondaryCalendarId of SECONDARY_CALENDAR_IDS) {
-      const secondaryCalendar = callWithRetryAndExponentialBackoff(() => CalendarApp.getCalendarById(secondaryCalendarId));
+    const orphanedEvents = callWithRetryAndExponentialBackoff(() => primaryCalendar.getEvents(today, endDate)).filter(event => !event.getAllTagKeys().includes(SCRIPT_ID_TAG_KEY) && (event.getTitle().startsWith("Pre-Buffer") || event.getTitle().startsWith("Post-Buffer")))
+
+    for (const event of orphanedEvents) {
+      console.log("Deleting event: " + event.getTitle() + " " + event.getStartTime());
+      callWithRetryAndExponentialBackoff(() => event.deleteEvent());
+    }
+
+    for (const secondaryCalendarId of SECONDARY_CALENDAR_IDS) {
+      const secondaryCalendar = callWithRetryAndExponentialBackoff(() =>
+        CalendarApp.getCalendarById(secondaryCalendarId)
+      );
 
       for (const secondaryEvent of callWithRetryAndExponentialBackoff(() => secondaryCalendar.getEvents(today, endDate))) {
-        primaryEventIndex = previouslyCreatedEvents.findIndex(event => event.getTag(ORIGINAL_CALENDAR_ID_TAG_KEY) === secondaryCalendarId && event.getTag(ORIGINAL_EVENT_ID_TAG_KEY) == secondaryEvent.getId());
+        const primaryEventIndex = previouslyCreatedEvents.findIndex(
+          event =>
+            event.getTag(ORIGINAL_CALENDAR_ID_TAG_KEY) === secondaryCalendarId &&
+            event.getTag(ORIGINAL_EVENT_ID_TAG_KEY) === secondaryEvent.getId()
+        );
+
+        let primaryEvent;
         if (primaryEventIndex === -1) {
-          if (secondaryEvent.isAllDayEvent()) {
-            primaryEvent = primaryCalendar.createAllDayEvent(
-              secondaryEvent.getTitle(),
-              secondaryEvent.getAllDayStartDate(),
-              secondaryEvent.getAllDayEndDate(),
-              {
-                description: secondaryEvent.getDescription(),
-                location: secondaryEvent.getLocation(),
-              }
-            );
-          }
-          else {
-            primaryEvent = primaryCalendar.createEvent(
-              secondaryEvent.getTitle(),
-              secondaryEvent.getStartTime(),
-              secondaryEvent.getEndTime(),
-              {
-                description: secondaryEvent.getDescription(),
-                location: secondaryEvent.getLocation(),
-              }
-            );
-          }
+          primaryEvent = secondaryEvent.isAllDayEvent()
+            ? primaryCalendar.createAllDayEvent(
+                secondaryEvent.getTitle(),
+                secondaryEvent.getAllDayStartDate(),
+                secondaryEvent.getAllDayEndDate(),
+                { description: secondaryEvent.getDescription(), location: secondaryEvent.getLocation() }
+              )
+            : primaryCalendar.createEvent(
+                `${STAGING_TITLE_PREFIX} ${secondaryEvent.getTitle()}`,
+                secondaryEvent.getStartTime(),
+                secondaryEvent.getEndTime(),
+                { description: secondaryEvent.getDescription(), location: secondaryEvent.getLocation() }
+              );
         } else {
           primaryEvent = previouslyCreatedEvents[primaryEventIndex];
           previouslyCreatedEvents.splice(primaryEventIndex, 1);
@@ -240,17 +250,29 @@ function main() {
         setTagIfNeeded(primaryEvent, SCRIPT_ID_TAG_KEY, SCRIPT_ID);
         setTagIfNeeded(primaryEvent, ORIGINAL_CALENDAR_ID_TAG_KEY, secondaryCalendarId);
         setTagIfNeeded(primaryEvent, ORIGINAL_EVENT_ID_TAG_KEY, secondaryEvent.getId());
-
         setEventAttributesIfNeeded(primaryEvent, secondaryEvent, secondaryCalendar);
 
         if (secondaryEvent.isAllDayEvent()) {
-          setStartAndEndTimesIfNeeded(primaryEvent.setAllDayDates, () => primaryEvent.isAllDayEvent() ? primaryEvent.getAllDayStartDate() : null, () => primaryEvent.isAllDayEvent() ? primaryEvent.getAllDayEndDate() : null, secondaryEvent.getAllDayStartDate(), secondaryEvent.getAllDayEndDate())
-        }
-        else {
-          setStartAndEndTimesIfNeeded(primaryEvent.setTime, primaryEvent.getStartTime, primaryEvent.getEndTime, secondaryEvent.getStartTime(), secondaryEvent.getEndTime());
+          setStartAndEndTimesIfNeeded(
+            primaryEvent.setAllDayDates,
+            () => (primaryEvent.isAllDayEvent() ? primaryEvent.getAllDayStartDate() : null),
+            () => (primaryEvent.isAllDayEvent() ? primaryEvent.getAllDayEndDate() : null),
+            secondaryEvent.getAllDayStartDate(),
+            secondaryEvent.getAllDayEndDate()
+          );
+        } else {
+          setStartAndEndTimesIfNeeded(
+            primaryEvent.setTime,
+            primaryEvent.getStartTime,
+            primaryEvent.getEndTime,
+            secondaryEvent.getStartTime(),
+            secondaryEvent.getEndTime()
+          );
           createOrUpdateBufferEvent(primaryCalendar, previouslyCreatedEvents, primaryEvent, "Pre", secondaryCalendar);
           createOrUpdateBufferEvent(primaryCalendar, previouslyCreatedEvents, primaryEvent, "Post", secondaryCalendar);
         }
+
+        setIfNeeded(primaryEvent.setTitle, () => primaryEvent.getTitle(), secondaryEvent.getTitle());
       }
     }
 
