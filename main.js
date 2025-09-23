@@ -260,6 +260,7 @@ function main() {
             secondaryEvent.getAllDayStartDate(),
             secondaryEvent.getAllDayEndDate()
           );
+          setIfNeeded(primaryEvent.setTitle, () => primaryEvent.getTitle(), secondaryEvent.getTitle());
         } else {
           setStartAndEndTimesIfNeeded(
             primaryEvent.setTime,
@@ -268,11 +269,10 @@ function main() {
             secondaryEvent.getStartTime(),
             secondaryEvent.getEndTime()
           );
+          setIfNeeded(primaryEvent.setTitle, () => primaryEvent.getTitle(), secondaryEvent.getTitle());
           createOrUpdateBufferEvent(primaryCalendar, previouslyCreatedEvents, primaryEvent, "Pre", secondaryCalendar);
           createOrUpdateBufferEvent(primaryCalendar, previouslyCreatedEvents, primaryEvent, "Post", secondaryCalendar);
         }
-
-        setIfNeeded(primaryEvent.setTitle, () => primaryEvent.getTitle(), secondaryEvent.getTitle());
       }
     }
 
