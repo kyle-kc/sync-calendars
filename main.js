@@ -131,12 +131,12 @@ function setTagIfNeeded(event, tag_key, tag_value) {
 }
 
 function setStartAndEndTimesIfNeeded(setMethod, getStartTimeMethod, getEndTimeMethod, startTime, endTime) {
-    if (getStartTimeMethod().getTime() != startTime.getTime() || getEndTimeMethod().getTime() != endTime.getTime()) {
+    if (getStartTimeMethod().getTime() !== startTime.getTime() || getEndTimeMethod().getTime() !== endTime.getTime()) {
         callWithRetryAndExponentialBackoff(() => setMethod(startTime, endTime));
     }
 }
 
-function setEventAttributesIfNeeded(targetEvent, sourceEvent, sourceCalendar, description = sourceEvent.getDescription(), location = sourceEvent.getLocation(), title = sourceEvent.getTitle()) {
+function setEventAttributesIfNeeded(targetEvent, sourceEvent, sourceCalendar, description = sourceEvent.getDescription(), location = sourceEvent.getLocation()) {
     setIfNeeded(targetEvent.setColor, () => targetEvent.getColor(), sourceEvent.getColor() || getClosestEventColor(sourceCalendar.getColor()));
     setIfNeeded(targetEvent.setAnyoneCanAddSelf, () => targetEvent.anyoneCanAddSelf(), false);
     setIfNeeded(targetEvent.setDescription, () => targetEvent.getDescription(), description);
@@ -177,7 +177,7 @@ function createOrUpdateBufferEvent(primaryCalendar, previouslyCreatedEvents, eve
     setTagIfNeeded(bufferEvent, bufferType === "Pre" ? PRE_BUFFER_FOR_EVENT_ID_TAG : POST_BUFFER_FOR_EVENT_ID_TAG, event.getId());
 
     setStartAndEndTimesIfNeeded(bufferEvent.setTime, bufferEvent.getStartTime, bufferEvent.getEndTime, bufferEventStartTime, bufferEventEndTime);
-    setEventAttributesIfNeeded(bufferEvent, event, secondaryCalendar, null, null, bufferEventTitle);
+    setEventAttributesIfNeeded(bufferEvent, event, secondaryCalendar, null, null);
     setIfNeeded(bufferEvent.setTitle, () => bufferEvent.getTitle(), bufferEventTitle);
 }
 
