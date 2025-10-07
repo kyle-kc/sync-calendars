@@ -3,16 +3,20 @@
   "version": "1.0.0",
   "description": "Google Apps Script to sync events from multiple calendars",
   "scripts": {
-    "deploy": "clasp deploy",
+    "build": "tsc && cp appsscript.json dist/",
+    "deploy": "npm run build && clasp deploy",
     "logs": "clasp logs",
     "open": "clasp open",
     "pull": "clasp pull",
-    "push": "clasp push",
-    "set-up": "clasp login && clasp create --type standalone --title \"Calendar Sync\""
+    "push": "npm run build && clasp push",
+    "set-up": "clasp login && clasp create --type standalone --title \"Calendar Sync\"",
+    "watch": "tsc --watch"
   },
   "devDependencies": {
     "@google/clasp": "^2.4.2",
-    "@types/google-apps-script": "^1.0.83"
+    "@types/google-apps-script": "^1.0.83",
+    "ts2gas": "^4.2.0",
+    "typescript": "^5.9.3"
   },
   "author": "",
   "license": "ISC"
