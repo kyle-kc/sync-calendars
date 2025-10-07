@@ -1,6 +1,5 @@
-const PRIMARY_CALENDAR_ID = "YOUR_CALENDAR_ID";  // probably your email
-
-const SECONDARY_CALENDAR_IDS = ["OTHER_CALENDAR_1", "OTHER_CALENDAR_2"]; // probably other emails
+const PRIMARY_CALENDAR_ID_KEY = 'PRIMARY_CALENDAR_ID';
+const SECONDARY_CALENDAR_IDS_KEY = 'SECONDARY_CALENDAR_IDS';
 
 const DAYS_LOOKAHEAD = 365;
 const STAGING_TITLE_PREFIX = "[STAGING]";
@@ -199,6 +198,19 @@ function main() {
     }
 
     try {
+        const scriptProperties = PropertiesService.getScriptProperties();
+
+        const PRIMARY_CALENDAR_ID = scriptProperties.getProperty(PRIMARY_CALENDAR_ID_KEY);
+        if (!PRIMARY_CALENDAR_ID) {
+            throw new Error(`${PRIMARY_CALENDAR_ID_KEY} not set. Add it in Project Settings > Script Properties`);
+        }
+
+        const SECONDARY_CALENDAR_IDS_STRING = scriptProperties.getProperty(SECONDARY_CALENDAR_IDS_KEY);
+        if (!SECONDARY_CALENDAR_IDS_STRING) {
+            throw new Error(`${SECONDARY_CALENDAR_IDS_KEY} not set. Add it in Project Settings > Script Properties (comma-separated)`);
+        }
+        const SECONDARY_CALENDAR_IDS = SECONDARY_CALENDAR_IDS_STRING.split(',').map(id => id.trim());
+
         const today = new Date();
         today.setTimeToMidnight();
         const endDate = new Date();
