@@ -10,11 +10,18 @@
     "pull": "clasp pull",
     "push": "npm run build && clasp push",
     "set-up": "clasp login && clasp create --type standalone --title \"Calendar Sync\"",
-    "watch": "tsc --watch"
+    "style:check": "prettier --check 'src/**/*.ts' && eslint 'src/**/*.ts'",
+    "style:fix": "prettier --write 'src/**/*.ts' && eslint 'src/**/*.ts' --fix"
   },
   "devDependencies": {
+    "@eslint/js": "^9.37.0",
     "@google/clasp": "^2.4.2",
     "@types/google-apps-script": "^2.0.5",
+    "@typescript-eslint/eslint-plugin": "^8.46.0",
+    "@typescript-eslint/parser": "^8.46.0",
+    "eslint": "^9.37.0",
+    "eslint-config-prettier": "^10.1.8",
+    "prettier": "^3.6.2",
     "ts2gas": "^4.2.0",
     "typescript": "^5.9.3"
   },

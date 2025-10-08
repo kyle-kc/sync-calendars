@@ -38,3 +38,12 @@ Google Apps script which syncs events from multiple external calendars into anot
         5. Select minute interval: every minute
         6. Failure notification settings: as desired. It can get noisy with transient failures from Google, so I have
            mine set to notify me daily.
+
+# Development
+
+## Code Style
+
+This project uses ESLint and Prettier to maintain consistent code style. Use these commands to check and fix code style:
+
+- `npm run style:check` - Check code formatting and linting issues without making changes
+- `npm run style:fix` - Automatically fix formatting and linting issues
