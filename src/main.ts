@@ -1,6 +1,7 @@
+type LAB = readonly [l: number, a: number, b: number];
+
 const PRIMARY_CALENDAR_ID_KEY = 'PRIMARY_CALENDAR_ID';
 const SECONDARY_CALENDAR_IDS_KEY = 'SECONDARY_CALENDAR_IDS';
-
 const DAYS_LOOKAHEAD = 365;
 const STAGING_TITLE_PREFIX = "[STAGING]";
 const SCRIPT_ID_TAG_KEY = "autoCreatedByScriptId";
@@ -10,128 +11,242 @@ const PRE_BUFFER_FOR_EVENT_ID_TAG = "preBufferForEventId";
 const POST_BUFFER_FOR_EVENT_ID_TAG = "postBufferForEventId";
 const SCRIPT_ID = ScriptApp.getScriptId();
 
-const EVENT_COLORS_TO_HEX_CODES = new Map<GoogleAppsScript.Calendar.EventColor, string>([
-    [CalendarApp.EventColor.PALE_BLUE, "#a4bdfc"],
-    [CalendarApp.EventColor.PALE_GREEN, "#7ae7bf"],
-    [CalendarApp.EventColor.MAUVE, "#dbadff"],
-    [CalendarApp.EventColor.PALE_RED, "#ff887c"],
-    [CalendarApp.EventColor.YELLOW, "#fbd75b"],
-    [CalendarApp.EventColor.ORANGE, "#ffb878"],
-    [CalendarApp.EventColor.CYAN, "#46d6db"],
-    [CalendarApp.EventColor.GRAY, "#e1e1e1"],
-    [CalendarApp.EventColor.BLUE, "#5484ed"],
-    [CalendarApp.EventColor.GREEN, "#51b749"],
-    [CalendarApp.EventColor.RED, "#dc2127"]
-]);
+const EVENT_COLOR_KEYS: GoogleAppsScript.Calendar.EventColor[] = [
+    GoogleAppsScript.Calendar.EventColor.PALE_BLUE,
+    GoogleAppsScript.Calendar.EventColor.PALE_GREEN,
+    GoogleAppsScript.Calendar.EventColor.MAUVE,
+    GoogleAppsScript.Calendar.EventColor.PALE_RED,
+    GoogleAppsScript.Calendar.EventColor.YELLOW,
+    GoogleAppsScript.Calendar.EventColor.ORANGE,
+    GoogleAppsScript.Calendar.EventColor.CYAN,
+    GoogleAppsScript.Calendar.EventColor.GRAY,
+    GoogleAppsScript.Calendar.EventColor.BLUE,
+    GoogleAppsScript.Calendar.EventColor.GREEN,
+    GoogleAppsScript.Calendar.EventColor.RED
+];
+
+const EVENT_COLORS_TO_HEX_CODES: Record<GoogleAppsScript.Calendar.EventColor, string> = {
+    [GoogleAppsScript.Calendar.EventColor.PALE_BLUE]: "#a4bdfc",
+    [GoogleAppsScript.Calendar.EventColor.PALE_GREEN]: "#7ae7bf",
+    [GoogleAppsScript.Calendar.EventColor.MAUVE]: "#dbadff",
+    [GoogleAppsScript.Calendar.EventColor.PALE_RED]: "#ff887c",
+    [GoogleAppsScript.Calendar.EventColor.YELLOW]: "#fbd75b",
+    [GoogleAppsScript.Calendar.EventColor.ORANGE]: "#ffb878",
+    [GoogleAppsScript.Calendar.EventColor.CYAN]: "#46d6db",
+    [GoogleAppsScript.Calendar.EventColor.GRAY]: "#e1e1e1",
+    [GoogleAppsScript.Calendar.EventColor.BLUE]: "#5484ed",
+    [GoogleAppsScript.Calendar.EventColor.GREEN]: "#51b749",
+    [GoogleAppsScript.Calendar.EventColor.RED]: "#dc2127"
+};
 
 const INITIAL_BACKOFF_MILLISECONDS = 200;
 const MAX_RETRIES = 10;
-
 const BUFFER_DURATION_MILLISECONDS = 30 * 60 * 1000; // 30 minutes
 
 const hexCodeToClosestEventColorCache = new Map<string, GoogleAppsScript.Calendar.EventColor>();
 
-// Custom type for extended Date
-interface ExtendedDate extends Date {
-    setTimeToMidnight(): ExtendedDate;
+function main(): void {
+    const lock = LockService.getScriptLock();
+    if (!lock.tryLock(1)) {
+        return;
+    }
+
+    try {
+        const scriptProperties = PropertiesService.getScriptProperties();
+
+        const primaryCalendarId = scriptProperties.getProperty(PRIMARY_CALENDAR_ID_KEY);
+        if (!primaryCalendarId) {
+            throw new Error(`${PRIMARY_CALENDAR_ID_KEY} not set. Add it in Project Settings > Script Properties.`);
+        }
+
+        const secondaryCalendarIdsString = scriptProperties.getProperty(SECONDARY_CALENDAR_IDS_KEY);
+        if (!secondaryCalendarIdsString) {
+            throw new Error(`${SECONDARY_CALENDAR_IDS_KEY} not set. Add it in Project Settings > Script Properties (comma-separated).`);
+        }
+        const secondaryCalendarIds = secondaryCalendarIdsString.split(',').map(secondaryCalendarId => secondaryCalendarId.trim());
+
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+
+        const endDate = new Date();
+        endDate.setDate(today.getDate() + DAYS_LOOKAHEAD);
+        endDate.setHours(0, 0, 0, 0);
+
+        const primaryCalendar = callWithRetryAndExponentialBackoff(() =>
+            CalendarApp.getCalendarById(primaryCalendarId)
+        );
+
+        cleanUpStagingEvents(primaryCalendar, today, endDate);
+
+        const previouslyCreatedEvents = callWithRetryAndExponentialBackoff(() =>
+            primaryCalendar.getEvents(today, endDate)
+        ).filter((event: GoogleAppsScript.Calendar.CalendarEvent) => event.getTag(SCRIPT_ID_TAG_KEY) === SCRIPT_ID);
+
+        const orphanedEvents = callWithRetryAndExponentialBackoff(() =>
+            primaryCalendar.getEvents(today, endDate)
+        ).filter((event: GoogleAppsScript.Calendar.CalendarEvent) =>
+            !event.getAllTagKeys().includes(SCRIPT_ID_TAG_KEY) &&
+            (event.getTitle().startsWith("Pre-Buffer") || event.getTitle().startsWith("Post-Buffer"))
+        );
+
+        for (const event of orphanedEvents) {
+            console.log("Deleting event: " + event.getTitle() + " " + event.getStartTime());
+            callWithRetryAndExponentialBackoff(event.deleteEvent);
+        }
+
+        for (const secondaryCalendarId of secondaryCalendarIds) {
+            const secondaryCalendar = callWithRetryAndExponentialBackoff(() =>
+                CalendarApp.getCalendarById(secondaryCalendarId)
+            );
+
+            for (const secondaryEvent of callWithRetryAndExponentialBackoff(() => secondaryCalendar.getEvents(today, endDate))) {
+                const primaryEventIndex = previouslyCreatedEvents.findIndex(
+                    (event: GoogleAppsScript.Calendar.CalendarEvent) =>
+                        event.getTag(ORIGINAL_CALENDAR_ID_TAG_KEY) === secondaryCalendarId &&
+                        event.getTag(ORIGINAL_EVENT_ID_TAG_KEY) === secondaryEvent.getId()
+                );
+
+                const primaryEvent: GoogleAppsScript.Calendar.CalendarEvent = (() => {
+                    if (primaryEventIndex === -1) {
+                        return secondaryEvent.isAllDayEvent()
+                            ? primaryCalendar.createAllDayEvent(
+                                secondaryEvent.getTitle(),
+                                secondaryEvent.getAllDayStartDate(),
+                                secondaryEvent.getAllDayEndDate(),
+                                {description: secondaryEvent.getDescription(), location: secondaryEvent.getLocation()}
+                            )
+                            : primaryCalendar.createEvent(
+                                `${STAGING_TITLE_PREFIX} ${secondaryEvent.getTitle()}`,
+                                secondaryEvent.getStartTime(),
+                                secondaryEvent.getEndTime(),
+                                {description: secondaryEvent.getDescription(), location: secondaryEvent.getLocation()}
+                            );
+                    } else {
+                        const event = previouslyCreatedEvents[primaryEventIndex];
+                        previouslyCreatedEvents.splice(primaryEventIndex, 1);
+                        return event;
+                    }
+                })();
+
+                setTagIfNeeded(primaryEvent, SCRIPT_ID_TAG_KEY, SCRIPT_ID);
+                setTagIfNeeded(primaryEvent, ORIGINAL_CALENDAR_ID_TAG_KEY, secondaryCalendarId);
+                setTagIfNeeded(primaryEvent, ORIGINAL_EVENT_ID_TAG_KEY, secondaryEvent.getId());
+                setEventAttributesIfNeeded(primaryEvent, secondaryEvent, secondaryCalendar);
+
+                if (secondaryEvent.isAllDayEvent()) {
+                    const startDate = new Date(secondaryEvent.getAllDayStartDate().getTime());
+                    const endDate = new Date(secondaryEvent.getAllDayEndDate().getTime());
+                    setStartAndEndTimesIfNeeded(
+                        primaryEvent.setAllDayDates,
+                        () => primaryEvent.isAllDayEvent() ? new Date(primaryEvent.getAllDayStartDate().getTime()) : new Date(),
+                        () => primaryEvent.isAllDayEvent() ? new Date(primaryEvent.getAllDayEndDate().getTime()) : new Date(),
+                        startDate,
+                        endDate
+                    );
+                    setIfNeeded(
+                        primaryEvent.setTitle,
+                        primaryEvent.getTitle,
+                        secondaryEvent.getTitle()
+                    );
+                } else {
+                    setStartAndEndTimesIfNeeded(
+                        primaryEvent.setTime,
+                        () => new Date(primaryEvent.getStartTime().getTime()),
+                        () => new Date(primaryEvent.getEndTime().getTime()),
+                        new Date(secondaryEvent.getStartTime().getTime()),
+                        new Date(secondaryEvent.getEndTime().getTime())
+                    );
+                    setIfNeeded(
+                        primaryEvent.setTitle,
+                        primaryEvent.getTitle,
+                        secondaryEvent.getTitle()
+                    );
+                    createOrUpdateBufferEvent(primaryCalendar, previouslyCreatedEvents, primaryEvent, "Pre", secondaryCalendar);
+                    createOrUpdateBufferEvent(primaryCalendar, previouslyCreatedEvents, primaryEvent, "Post", secondaryCalendar);
+                }
+            }
+        }
+
+        for (const primaryEvent of previouslyCreatedEvents) {
+            callWithRetryAndExponentialBackoff(primaryEvent.deleteEvent);
+        }
+
+    } finally {
+        lock.releaseLock();
+    }
 }
 
-function extendDate(date: Date): ExtendedDate {
-    const extended = date as ExtendedDate;
-    extended.setTimeToMidnight = function(): ExtendedDate {
-        this.setHours(0);
-        this.setMinutes(0);
-        this.setSeconds(0);
-        this.setMilliseconds(0);
-        return this;
-    };
-    return extended;
-}
+function hexToLab(hex: string): LAB {
+    // Parse hex to RGB
+    const number = parseInt(hex.slice(1), 16);
+    const [r, g, b] = [(number >> 16) & 255, (number >> 8) & 255, number & 255].map(value => {
+        const normalizedChannel = value / 255;
+        return normalizedChannel > 0.04045 ? ((normalizedChannel + 0.055) / 1.055) ** 2.4 : normalizedChannel / 12.92;
+    });
 
-function hexToRgb(hex: string): [number, number, number] {
-    const bigint = parseInt(hex.substring(1), 16);
-    return [(bigint >> 16) & 255, (bigint >> 8) & 255, bigint & 255];
-}
-
-function rgbToXyz(rgb: [number, number, number]): [number, number, number] {
-    let r = rgb[0] / 255, g = rgb[1] / 255, b = rgb[2] / 255;
-
-    r = r > 0.04045 ? Math.pow((r + 0.055) / 1.055, 2.4) : r / 12.92;
-    g = g > 0.04045 ? Math.pow((g + 0.055) / 1.055, 2.4) : g / 12.92;
-    b = b > 0.04045 ? Math.pow((b + 0.055) / 1.055, 2.4) : b / 12.92;
-
-    r *= 100;
-    g *= 100;
-    b *= 100;
-
-    return [
+    // Convert RGB → XYZ (D65)
+    const [x, y, z] = [
         r * 0.4124564 + g * 0.3575761 + b * 0.1804375,
         r * 0.2126729 + g * 0.7151522 + b * 0.0721750,
-        r * 0.0193339 + g * 0.1191920 + b * 0.9503041
-    ];
+        r * 0.0193339 + g * 0.1191920 + b * 0.9503041,
+    ].map(value => value * 100);
+
+    // Normalize for LAB
+    const [xr, yr, zr] = [x / 95.047, y / 100.0, z / 108.883].map(value =>
+        value > 0.008856 ? Math.cbrt(value) : (7.787 * value) + (16 / 116)
+    );
+
+    // Return LAB
+    return [
+        (116 * yr) - 16,
+        500 * (xr - yr),
+        200 * (yr - zr),
+    ] as const;
 }
 
-function xyzToLab(xyz: [number, number, number]): [number, number, number] {
-    let x = xyz[0] / 95.047, y = xyz[1] / 100.000, z = xyz[2] / 108.883;
-
-    x = x > 0.008856 ? Math.pow(x, 1 / 3) : (7.787 * x) + (16 / 116);
-    y = y > 0.008856 ? Math.pow(y, 1 / 3) : (7.787 * y) + (16 / 116);
-    z = z > 0.008856 ? Math.pow(z, 1 / 3) : (7.787 * z) + (16 / 116);
-
-    return [(116 * y) - 16, 500 * (x - y), 200 * (y - z)];
-}
-
-function deltaE76(lab1: [number, number, number], lab2: [number, number, number]): number {
+function calculateColorDistance(colorHex1: string, colorHex2: string): number {
     return Math.hypot(
-        lab1[0] - lab2[0],
-        lab1[1] - lab2[1],
-        lab1[2] - lab2[2]
+        (hexToLab(colorHex1))[0] - (hexToLab(colorHex2))[0],
+        (hexToLab(colorHex1))[1] - (hexToLab(colorHex2))[1],
+        (hexToLab(colorHex1))[2] - (hexToLab(colorHex2))[2]
     );
 }
 
-function getClosestEventColor(hexCode: string): GoogleAppsScript.Calendar.EventColor {
-    if (!hexCodeToClosestEventColorCache.has(hexCode)) {
-        let closestColor: GoogleAppsScript.Calendar.EventColor | undefined;
-        let minDistance = Number.MAX_VALUE;
+function getClosestEventColor(targetColorHex: string): GoogleAppsScript.Calendar.EventColor {
+    if (!hexCodeToClosestEventColorCache.has(targetColorHex)) {
+        const closestColor = EVENT_COLOR_KEYS.reduce(
+            (eventColorCandidate, colorKey) => {
+                const distance = calculateColorDistance(targetColorHex, EVENT_COLORS_TO_HEX_CODES[colorKey]);
+                return distance < eventColorCandidate.distance ? {
+                    color: colorKey,
+                    distance
+                } : eventColorCandidate;
+            },
+            {color: undefined, distance: Infinity}
+        ).color;
 
-        EVENT_COLORS_TO_HEX_CODES.forEach((hexColor, eventColor) => {
-            const distance = deltaE76(xyzToLab(rgbToXyz(hexToRgb(hexCode))), xyzToLab(rgbToXyz(hexToRgb(hexColor))));
-            if (distance < minDistance) {
-                minDistance = distance;
-                closestColor = eventColor;
-            }
-        });
-
-        if (closestColor !== undefined) {
-            hexCodeToClosestEventColorCache.set(hexCode, closestColor);
-        }
+        hexCodeToClosestEventColorCache.set(targetColorHex, closestColor);
     }
-    return hexCodeToClosestEventColorCache.get(hexCode)!;
+    return hexCodeToClosestEventColorCache.get(targetColorHex);
 }
 
 function callWithRetryAndExponentialBackoff<T>(apiFunction: () => T): T {
-    let numberOfTries = 0;
-    while (true) {
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
         try {
             return apiFunction();
-        } catch (exception: any) {
-            if (
-                exception.message.includes("You have been creating or deleting too many calendars") &&
-                numberOfTries <= MAX_RETRIES
-            ) {
-                Utilities.sleep(INITIAL_BACKOFF_MILLISECONDS * 2 ** numberOfTries);
-                numberOfTries++;
-            } else {
-                throw exception;
+        } catch (error: Error) {
+            if (!error.message?.includes("You have been creating or deleting too many calendars") || attempt === MAX_RETRIES) {
+                throw error;
             }
+            Utilities.sleep(INITIAL_BACKOFF_MILLISECONDS * 2 ** attempt + Math.random() * 500);
         }
     }
 }
 
 function setIfNeeded<T>(
     setMethod: (value: T) => void,
-    getMethod: () => T | null | undefined,
-    newValue: T | null | undefined
+    getMethod: () => T,
+    newValue: T
 ): void {
     const currentValue = getMethod();
     if ((currentValue || newValue) && currentValue !== newValue) {
@@ -171,10 +286,8 @@ function setEventAttributesIfNeeded(
     const sourceEventColor = sourceEvent.getColor();
     const calendarColorHex = sourceCalendar.getColor();
 
-    // Determine the color to set - if source event has a color use it, otherwise calculate from calendar color
     let colorToSet: GoogleAppsScript.Calendar.EventColor | null = null;
     if (sourceEventColor) {
-        // sourceEventColor can be either EventColor or string depending on the API
         if (typeof sourceEventColor === 'string') {
             colorToSet = getClosestEventColor(sourceEventColor);
         } else {
@@ -186,7 +299,6 @@ function setEventAttributesIfNeeded(
 
     if (colorToSet) {
         const currentColor = targetEvent.getColor();
-        // Convert current color to EventColor if it's a string
         let currentEventColor: GoogleAppsScript.Calendar.EventColor | null = null;
         if (currentColor) {
             if (typeof currentColor === 'string') {
@@ -201,47 +313,46 @@ function setEventAttributesIfNeeded(
         }
     }
     setIfNeeded(
-        (value: boolean) => targetEvent.setAnyoneCanAddSelf(value),
-        () => targetEvent.anyoneCanAddSelf(),
+        targetEvent.setAnyoneCanAddSelf,
+        targetEvent.anyoneCanAddSelf,
         false
     );
     setIfNeeded(
-        (desc: string | null) => targetEvent.setDescription(desc || ''),
-        () => targetEvent.getDescription(),
+        targetEvent.setDescription,
+        targetEvent.getDescription,
         description
     );
     setIfNeeded(
-        (value: boolean) => targetEvent.setGuestsCanInviteOthers(value),
-        () => targetEvent.guestsCanInviteOthers(),
+        targetEvent.setGuestsCanInviteOthers,
+        targetEvent.guestsCanInviteOthers,
         false
     );
     setIfNeeded(
-        (value: boolean) => targetEvent.setGuestsCanModify(value),
-        () => targetEvent.guestsCanModify(),
+        targetEvent.setGuestsCanModify,
+        targetEvent.guestsCanModify,
         false
     );
     setIfNeeded(
-        (value: boolean) => targetEvent.setGuestsCanSeeGuests(value),
-        () => targetEvent.guestsCanSeeGuests(),
+        targetEvent.setGuestsCanSeeGuests,
+        targetEvent.guestsCanSeeGuests,
         false
     );
     setIfNeeded(
-        (loc: string | null) => targetEvent.setLocation(loc || ''),
-        () => targetEvent.getLocation(),
+        targetEvent.setLocation,
+        targetEvent.getLocation,
         location
     );
-    // Transparency methods might not be in type definitions, using any cast
     setIfNeeded(
-        (transparency: any) => (targetEvent as any).setTransparency(transparency),
-        () => (targetEvent as any).getTransparency ? (targetEvent as any).getTransparency() : null,
-        (sourceEvent as any).getTransparency ? (sourceEvent as any).getTransparency() : null
+        targetEvent.setTransparency,
+        targetEvent.getTransparency,
+        sourceEvent.getTransparency()
     );
     setIfNeeded(
-        (visibility: GoogleAppsScript.Calendar.Visibility) => targetEvent.setVisibility(visibility),
-        () => targetEvent.getVisibility(),
-        CalendarApp.Visibility.DEFAULT
+        targetEvent.setVisibility,
+        targetEvent.getVisibility,
+        GoogleAppsScript.Calendar.Visibility.DEFAULT
     );
-    callWithRetryAndExponentialBackoff(() => targetEvent.removeAllReminders());  // the get methods don't actually return the correct data for this, so we just remove all reminders to be safe
+    callWithRetryAndExponentialBackoff(targetEvent.removeAllReminders);
 }
 
 function createOrUpdateBufferEvent(
@@ -264,39 +375,41 @@ function createOrUpdateBufferEvent(
             previouslyCreatedEvent.getTag(bufferForEventIdTag) === event.getId()
     );
 
-    let bufferEvent: GoogleAppsScript.Calendar.CalendarEvent;
-    if (bufferEventIndex === -1) {
-        bufferEvent = callWithRetryAndExponentialBackoff(() =>
-            primaryCalendar.createEvent(
-                `${STAGING_TITLE_PREFIX} ${bufferEventTitle}`,
-                bufferEventStartTime,
-                bufferEventEndTime,
-                {
-                    description: null,
-                    location: null,
-                }
-            )
-        );
-    } else {
-        bufferEvent = previouslyCreatedEvents[bufferEventIndex];
-        previouslyCreatedEvents.splice(bufferEventIndex, 1);
-    }
+    const bufferEvent: GoogleAppsScript.Calendar.CalendarEvent = (() => {
+        if (bufferEventIndex === -1) {
+            return callWithRetryAndExponentialBackoff(() =>
+                primaryCalendar.createEvent(
+                    `${STAGING_TITLE_PREFIX} ${bufferEventTitle}`,
+                    bufferEventStartTime,
+                    bufferEventEndTime,
+                    {
+                        description: null,
+                        location: null,
+                    }
+                )
+            );
+        } else {
+            const event = previouslyCreatedEvents[bufferEventIndex];
+            previouslyCreatedEvents.splice(bufferEventIndex, 1);
+            return event;
+        }
+    })();
 
     setTagIfNeeded(bufferEvent, SCRIPT_ID_TAG_KEY, SCRIPT_ID);
     setTagIfNeeded(bufferEvent, ORIGINAL_CALENDAR_ID_TAG_KEY, secondaryCalendar.getId());
     setTagIfNeeded(bufferEvent, bufferType === "Pre" ? PRE_BUFFER_FOR_EVENT_ID_TAG : POST_BUFFER_FOR_EVENT_ID_TAG, event.getId());
 
     setStartAndEndTimesIfNeeded(
-        (start: Date, end: Date) => bufferEvent.setTime(start, end),
-        () => new Date(bufferEvent.getStartTime() as any),
-        () => new Date(bufferEvent.getEndTime() as any),
+        bufferEvent.setTime,
+        () => new Date(bufferEvent.getStartTime().getTime()),
+        () => new Date(bufferEvent.getEndTime().getTime()),
         bufferEventStartTime,
         bufferEventEndTime
     );
     setEventAttributesIfNeeded(bufferEvent, event, secondaryCalendar, null, null);
     setIfNeeded(
-        (title: string) => bufferEvent.setTitle(title),
-        () => bufferEvent.getTitle(),
+        bufferEvent.setTitle,
+        bufferEvent.getTitle,
         bufferEventTitle
     );
 }
@@ -306,143 +419,13 @@ function cleanUpStagingEvents(
     today: Date,
     endDate: Date
 ): void {
-    const stagedEvents = primaryCalendar
+    for (const event of primaryCalendar
         .getEvents(today, endDate)
-        .filter(event => event.getTitle().startsWith(STAGING_TITLE_PREFIX));
-
-    for (const event of stagedEvents) {
+        .filter(event => event.getTitle().startsWith(STAGING_TITLE_PREFIX))) {
         console.warn(`Deleting orphaned staged event: ${event.getTitle()} (${event.getId()})`);
-        callWithRetryAndExponentialBackoff(() => event.deleteEvent());
+        callWithRetryAndExponentialBackoff(event.deleteEvent);
     }
 }
 
-function main(): void {
-    const lock = LockService.getScriptLock();
-    if (!lock.tryLock(1)) {
-        return;
-    }
-
-    try {
-        const scriptProperties = PropertiesService.getScriptProperties();
-
-        const PRIMARY_CALENDAR_ID = scriptProperties.getProperty(PRIMARY_CALENDAR_ID_KEY);
-        if (!PRIMARY_CALENDAR_ID) {
-            throw new Error(`${PRIMARY_CALENDAR_ID_KEY} not set. Add it in Project Settings > Script Properties`);
-        }
-
-        const SECONDARY_CALENDAR_IDS_STRING = scriptProperties.getProperty(SECONDARY_CALENDAR_IDS_KEY);
-        if (!SECONDARY_CALENDAR_IDS_STRING) {
-            throw new Error(`${SECONDARY_CALENDAR_IDS_KEY} not set. Add it in Project Settings > Script Properties (comma-separated)`);
-        }
-        const SECONDARY_CALENDAR_IDS = SECONDARY_CALENDAR_IDS_STRING.split(',').map(id => id.trim());
-
-        const today = extendDate(new Date());
-        today.setTimeToMidnight();
-        const endDate = extendDate(new Date());
-        endDate.setDate(today.getDate() + DAYS_LOOKAHEAD);
-        endDate.setTimeToMidnight();
-
-        const primaryCalendar = callWithRetryAndExponentialBackoff(() =>
-            CalendarApp.getCalendarById(PRIMARY_CALENDAR_ID)
-        );
-
-        cleanUpStagingEvents(primaryCalendar, today, endDate);
-
-        const previouslyCreatedEvents = callWithRetryAndExponentialBackoff(() =>
-            primaryCalendar.getEvents(today, endDate)
-        ).filter(event => event.getTag(SCRIPT_ID_TAG_KEY) === SCRIPT_ID);
-
-        const orphanedEvents = callWithRetryAndExponentialBackoff(() =>
-            primaryCalendar.getEvents(today, endDate)
-        ).filter(event =>
-            !event.getAllTagKeys().includes(SCRIPT_ID_TAG_KEY) &&
-            (event.getTitle().startsWith("Pre-Buffer") || event.getTitle().startsWith("Post-Buffer"))
-        );
-
-        for (const event of orphanedEvents) {
-            console.log("Deleting event: " + event.getTitle() + " " + new Date(event.getStartTime() as any));
-            callWithRetryAndExponentialBackoff(() => event.deleteEvent());
-        }
-
-        for (const secondaryCalendarId of SECONDARY_CALENDAR_IDS) {
-            const secondaryCalendar = callWithRetryAndExponentialBackoff(() =>
-                CalendarApp.getCalendarById(secondaryCalendarId)
-            );
-
-            for (const secondaryEvent of callWithRetryAndExponentialBackoff(() => secondaryCalendar.getEvents(today, endDate))) {
-                const primaryEventIndex = previouslyCreatedEvents.findIndex(
-                    event =>
-                        event.getTag(ORIGINAL_CALENDAR_ID_TAG_KEY) === secondaryCalendarId &&
-                        event.getTag(ORIGINAL_EVENT_ID_TAG_KEY) === secondaryEvent.getId()
-                );
-
-                let primaryEvent: GoogleAppsScript.Calendar.CalendarEvent;
-                if (primaryEventIndex === -1) {
-                    primaryEvent = secondaryEvent.isAllDayEvent()
-                        ? primaryCalendar.createAllDayEvent(
-                            secondaryEvent.getTitle(),
-                            new Date(secondaryEvent.getAllDayStartDate() as any),
-                            new Date(secondaryEvent.getAllDayEndDate() as any),
-                            {description: secondaryEvent.getDescription(), location: secondaryEvent.getLocation()}
-                        )
-                        : primaryCalendar.createEvent(
-                            `${STAGING_TITLE_PREFIX} ${secondaryEvent.getTitle()}`,
-                            secondaryEvent.getStartTime(),
-                            secondaryEvent.getEndTime(),
-                            {description: secondaryEvent.getDescription(), location: secondaryEvent.getLocation()}
-                        );
-                } else {
-                    primaryEvent = previouslyCreatedEvents[primaryEventIndex];
-                    previouslyCreatedEvents.splice(primaryEventIndex, 1);
-                }
-
-                setTagIfNeeded(primaryEvent, SCRIPT_ID_TAG_KEY, SCRIPT_ID);
-                setTagIfNeeded(primaryEvent, ORIGINAL_CALENDAR_ID_TAG_KEY, secondaryCalendarId);
-                setTagIfNeeded(primaryEvent, ORIGINAL_EVENT_ID_TAG_KEY, secondaryEvent.getId());
-                setEventAttributesIfNeeded(primaryEvent, secondaryEvent, secondaryCalendar);
-
-                if (secondaryEvent.isAllDayEvent()) {
-                    const startDate = new Date(secondaryEvent.getAllDayStartDate() as any);
-                    const endDate = new Date(secondaryEvent.getAllDayEndDate() as any);
-                    setStartAndEndTimesIfNeeded(
-                        (start: Date, end: Date) => primaryEvent.setAllDayDates(start, end),
-                        () => (primaryEvent.isAllDayEvent() ? new Date(primaryEvent.getAllDayStartDate() as any) : new Date()),
-                        () => (primaryEvent.isAllDayEvent() ? new Date(primaryEvent.getAllDayEndDate() as any) : new Date()),
-                        startDate,
-                        endDate
-                    );
-                    setIfNeeded(
-                        (title: string) => primaryEvent.setTitle(title),
-                        () => primaryEvent.getTitle(),
-                        secondaryEvent.getTitle()
-                    );
-                } else {
-                    setStartAndEndTimesIfNeeded(
-                        (start: Date, end: Date) => primaryEvent.setTime(start, end),
-                        () => new Date(primaryEvent.getStartTime() as any),
-                        () => new Date(primaryEvent.getEndTime() as any),
-                        new Date(secondaryEvent.getStartTime() as any),
-                        new Date(secondaryEvent.getEndTime() as any)
-                    );
-                    setIfNeeded(
-                        (title: string) => primaryEvent.setTitle(title),
-                        () => primaryEvent.getTitle(),
-                        secondaryEvent.getTitle()
-                    );
-                    createOrUpdateBufferEvent(primaryCalendar, previouslyCreatedEvents, primaryEvent, "Pre", secondaryCalendar);
-                    createOrUpdateBufferEvent(primaryCalendar, previouslyCreatedEvents, primaryEvent, "Post", secondaryCalendar);
-                }
-            }
-        }
-
-        // anything still in the list must have been deleted on the secondary calendar or accidentally duplicated, so let's delete it
-        for (const primaryEvent of previouslyCreatedEvents) {
-            callWithRetryAndExponentialBackoff(() => primaryEvent.deleteEvent());
-        }
-
-    } catch (exception) {
-        throw exception;
-    } finally {
-        lock.releaseLock();
-    }
-}
+// Make main function available to Google Apps Script runtime
+(globalThis as any).main = main;

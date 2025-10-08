@@ -14,7 +14,7 @@
   },
   "devDependencies": {
     "@google/clasp": "^2.4.2",
-    "@types/google-apps-script": "^1.0.83",
+    "@types/google-apps-script": "^2.0.5",
     "ts2gas": "^4.2.0",
     "typescript": "^5.9.3"
   },
