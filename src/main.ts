@@ -12,34 +12,34 @@ const POST_BUFFER_FOR_EVENT_ID_TAG = "postBufferForEventId";
 const SCRIPT_ID = ScriptApp.getScriptId();
 
 const EVENT_COLOR_KEYS: GoogleAppsScript.Calendar.EventColor[] = [
-  GoogleAppsScript.Calendar.EventColor.PALE_BLUE,
-  GoogleAppsScript.Calendar.EventColor.PALE_GREEN,
-  GoogleAppsScript.Calendar.EventColor.MAUVE,
-  GoogleAppsScript.Calendar.EventColor.PALE_RED,
-  GoogleAppsScript.Calendar.EventColor.YELLOW,
-  GoogleAppsScript.Calendar.EventColor.ORANGE,
-  GoogleAppsScript.Calendar.EventColor.CYAN,
-  GoogleAppsScript.Calendar.EventColor.GRAY,
-  GoogleAppsScript.Calendar.EventColor.BLUE,
-  GoogleAppsScript.Calendar.EventColor.GREEN,
-  GoogleAppsScript.Calendar.EventColor.RED,
+  CalendarApp.EventColor.PALE_BLUE,
+  CalendarApp.EventColor.PALE_GREEN,
+  CalendarApp.EventColor.MAUVE,
+  CalendarApp.EventColor.PALE_RED,
+  CalendarApp.EventColor.YELLOW,
+  CalendarApp.EventColor.ORANGE,
+  CalendarApp.EventColor.CYAN,
+  CalendarApp.EventColor.GRAY,
+  CalendarApp.EventColor.BLUE,
+  CalendarApp.EventColor.GREEN,
+  CalendarApp.EventColor.RED,
 ];
 
 const EVENT_COLORS_TO_HEX_CODES: Record<
   GoogleAppsScript.Calendar.EventColor,
   string
 > = {
-  [GoogleAppsScript.Calendar.EventColor.PALE_BLUE]: "#a4bdfc",
-  [GoogleAppsScript.Calendar.EventColor.PALE_GREEN]: "#7ae7bf",
-  [GoogleAppsScript.Calendar.EventColor.MAUVE]: "#dbadff",
-  [GoogleAppsScript.Calendar.EventColor.PALE_RED]: "#ff887c",
-  [GoogleAppsScript.Calendar.EventColor.YELLOW]: "#fbd75b",
-  [GoogleAppsScript.Calendar.EventColor.ORANGE]: "#ffb878",
-  [GoogleAppsScript.Calendar.EventColor.CYAN]: "#46d6db",
-  [GoogleAppsScript.Calendar.EventColor.GRAY]: "#e1e1e1",
-  [GoogleAppsScript.Calendar.EventColor.BLUE]: "#5484ed",
-  [GoogleAppsScript.Calendar.EventColor.GREEN]: "#51b749",
-  [GoogleAppsScript.Calendar.EventColor.RED]: "#dc2127",
+  [CalendarApp.EventColor.PALE_BLUE]: "#a4bdfc",
+  [CalendarApp.EventColor.PALE_GREEN]: "#7ae7bf",
+  [CalendarApp.EventColor.MAUVE]: "#dbadff",
+  [CalendarApp.EventColor.PALE_RED]: "#ff887c",
+  [CalendarApp.EventColor.YELLOW]: "#fbd75b",
+  [CalendarApp.EventColor.ORANGE]: "#ffb878",
+  [CalendarApp.EventColor.CYAN]: "#46d6db",
+  [CalendarApp.EventColor.GRAY]: "#e1e1e1",
+  [CalendarApp.EventColor.BLUE]: "#5484ed",
+  [CalendarApp.EventColor.GREEN]: "#51b749",
+  [CalendarApp.EventColor.RED]: "#dc2127",
 };
 
 const INITIAL_BACKOFF_MILLISECONDS = 200;
@@ -441,7 +441,7 @@ function setEventAttributesIfNeeded(
   setIfNeeded(
     targetEvent.setVisibility,
     targetEvent.getVisibility,
-    GoogleAppsScript.Calendar.Visibility.DEFAULT,
+    CalendarApp.Visibility.DEFAULT,
   );
   callWithRetryAndExponentialBackoff(targetEvent.removeAllReminders);
 }
