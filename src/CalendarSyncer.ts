@@ -136,7 +136,7 @@ export class CalendarSyncer {
       }
       Utilities.sleep(
         CalendarSyncer.INITIAL_BACKOFF_MILLISECONDS * 2 ** attempt +
-        Math.random() * 500,
+          Math.random() * 500,
       );
       return CalendarSyncer.callWithRetryAndExponentialBackoff(
         apiFunction,
@@ -176,7 +176,7 @@ export class CalendarSyncer {
 
       this.deleteOrphanedBufferEvents(today, endDate);
 
-      const previouslyCreatedEvents = [
+      const previouslyCreatedPrimaryEvents = [
         ...this.getEventsInRange(
           this.primaryCalendarId,
           today,
@@ -184,14 +184,14 @@ export class CalendarSyncer {
           `${CalendarSyncer.SCRIPT_ID_TAG_KEY}=${this.scriptId}`,
         ),
       ];
-      const processedPrimaryEventIds = new Set();
+      const processedPrimaryEventIds = new Set<string>();
 
       this.getSecondaryCalendars().forEach((secondaryCalendar) => {
         [
           ...this.getEventsInRange(secondaryCalendar.id, today, endDate),
         ].forEach((secondaryMainEvent) => {
           const primaryMainEvent = this.createOrUpdateMainEvent(
-            previouslyCreatedEvents,
+            previouslyCreatedPrimaryEvents,
             secondaryCalendar,
             secondaryMainEvent,
           );
@@ -201,19 +201,19 @@ export class CalendarSyncer {
             [BufferType.PRE, BufferType.POST].forEach((bufferType) =>
               processedPrimaryEventIds.add(
                 this.createOrUpdateBufferEvent(
-                  previouslyCreatedEvents,
+                  previouslyCreatedPrimaryEvents,
                   primaryMainEvent,
                   bufferType,
                   secondaryCalendar,
-                ),
+                ).id,
               ),
             );
           }
         });
       });
 
-      previouslyCreatedEvents
-        .filter((event) => !(event.id in processedPrimaryEventIds))
+      previouslyCreatedPrimaryEvents
+        .filter((event) => !processedPrimaryEventIds.has(event.id))
         .forEach((event) => {
           CalendarSyncer.callWithRetryAndExponentialBackoff(() =>
             this.Events.remove(this.primaryCalendarId, event.id),
@@ -248,8 +248,7 @@ export class CalendarSyncer {
         );
 
         if (!calendar || !(calendarId in calendarListEntriesById)) {
-          Logger.log(`Could not access secondary calendar: ${calendarId}`);
-          return null;
+          throw new Error(`Could not access secondary calendar: ${calendarId}`);
         }
 
         return {
@@ -345,9 +344,9 @@ export class CalendarSyncer {
       },
       secondaryMainEvent.transparency,
       secondaryMainEvent.colorId ??
-      this.colorCalculator.getClosestColorId(
-        secondaryCalendar.backgroundColor,
-      ),
+        this.colorCalculator.getClosestColorId(
+          secondaryCalendar.backgroundColor,
+        ),
       {
         [CalendarSyncer.SCRIPT_ID_TAG_KEY]: this.scriptId,
         [CalendarSyncer.ORIGINAL_CALENDAR_ID_TAG_KEY]: secondaryCalendar.id,
@@ -363,20 +362,20 @@ export class CalendarSyncer {
       (event) =>
         event.extendedProperties?.private?.[
           CalendarSyncer.ORIGINAL_CALENDAR_ID_TAG_KEY
-          ] === secondaryCalendar.id &&
+        ] === secondaryCalendar.id &&
         event.extendedProperties?.private?.[
           CalendarSyncer.ORIGINAL_EVENT_ID_TAG_KEY
-          ] === secondaryMainEvent.id,
+        ] === secondaryMainEvent.id,
     );
 
     return CalendarSyncer.callWithRetryAndExponentialBackoff(
       primaryMainEvent
         ? () =>
-          this.Events.patch(
-            eventProperties,
-            this.primaryCalendarId,
-            primaryMainEvent.id,
-          )
+            this.Events.patch(
+              eventProperties,
+              this.primaryCalendarId,
+              primaryMainEvent.id,
+            )
         : () => this.Events.insert(eventProperties, this.primaryCalendarId),
     ) as Event;
   }
@@ -405,15 +404,15 @@ export class CalendarSyncer {
       {
         dateTime: new Date(
           bufferEventStartTime.getTime() +
-          BufferType.BUFFER_DURATION_MILLISECONDS,
+            BufferType.BUFFER_DURATION_MILLISECONDS,
         ).toISOString(),
         timeZone: primaryMainEvent.end.timeZone,
       },
       primaryMainEvent.transparency,
       primaryMainEvent.colorId ??
-      this.colorCalculator.getClosestColorId(
-        secondaryCalendar.backgroundColor,
-      ),
+        this.colorCalculator.getClosestColorId(
+          secondaryCalendar.backgroundColor,
+        ),
       {
         [CalendarSyncer.SCRIPT_ID_TAG_KEY]: this.scriptId,
         [CalendarSyncer.ORIGINAL_CALENDAR_ID_TAG_KEY]: secondaryCalendar.id,
@@ -425,19 +424,19 @@ export class CalendarSyncer {
       (event) =>
         event.extendedProperties?.private?.[
           CalendarSyncer.ORIGINAL_CALENDAR_ID_TAG_KEY
-          ] === secondaryCalendar.id &&
+        ] === secondaryCalendar.id &&
         event.extendedProperties?.private?.[bufferType.tagKey] ===
-        primaryMainEvent.id,
+          primaryMainEvent.id,
     );
 
     return CalendarSyncer.callWithRetryAndExponentialBackoff(
       existingBufferEvent
         ? () =>
-          this.Events.patch(
-            eventProperties,
-            this.primaryCalendarId,
-            existingBufferEvent.id,
-          )
+            this.Events.patch(
+              eventProperties,
+              this.primaryCalendarId,
+              existingBufferEvent.id,
+            )
         : () => this.Events.insert(eventProperties, this.primaryCalendarId),
     ) as Event;
   }
@@ -448,12 +447,12 @@ export class CalendarSyncer {
         (event) =>
           !event.extendedProperties?.private?.[
             CalendarSyncer.SCRIPT_ID_TAG_KEY
-            ] &&
+          ] &&
           (BufferType.ALL.some((bufferType) =>
-              event.summary?.startsWith(bufferType.titlePrefix),
-            ) ||
+            event.summary?.startsWith(bufferType.titlePrefix),
+          ) ||
             event.summary ===
-            BufferType.SUMMARY_WHEN_NOT_INCLUDING_SOURCE_EVENT_DETAILS),
+              BufferType.SUMMARY_WHEN_NOT_INCLUDING_SOURCE_EVENT_DETAILS),
       )
       .forEach((event) => {
         if (event.id) {

@@ -16,7 +16,6 @@ export default [
         Calendar: "readonly",
         GoogleAppsScript: "readonly",
         LockService: "readonly",
-        Logger: "readonly",
         PropertiesService: "readonly",
         ScriptApp: "readonly",
         Utilities: "readonly",
