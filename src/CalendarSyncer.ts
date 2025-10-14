@@ -2,6 +2,8 @@ import { ColorCalculator } from "./ColorCalculator";
 
 type Event = GoogleAppsScript.Calendar.Schema.Event & {
   id: string; // Required - guaranteed by the API
+  start: GoogleAppsScript.Calendar.Schema.EventDateTime; // Required - guaranteed by the API
+  end: GoogleAppsScript.Calendar.Schema.EventDateTime; // Required - guaranteed by the API
 };
 
 type SecondaryCalendar = GoogleAppsScript.Calendar.Schema.Calendar & {
@@ -113,7 +115,7 @@ export class CalendarSyncer {
   }
 
   private static isAllDayEvent(event: Event): boolean {
-    return !!event.start?.date;
+    return !!event.start.date;
   }
 
   private static callWithRetryAndExponentialBackoff<T>(
@@ -302,11 +304,8 @@ export class CalendarSyncer {
   ) {
     return {
       summary,
-      description,
-      location,
       start,
       end,
-      transparency,
       visibility: "default",
       guestsCanInviteOthers: false,
       guestsCanModify: false,
@@ -317,6 +316,11 @@ export class CalendarSyncer {
         private: privateExtendedProperties,
       },
       colorId,
+      // Only include optional properties if they have defined values
+      // The API requires this
+      ...(description !== undefined && { description }),
+      ...(location !== undefined && { location }),
+      ...(transparency !== undefined && { transparency }),
     };
   }
 
@@ -329,8 +333,16 @@ export class CalendarSyncer {
       this.includeSourceEventDetails
         ? (secondaryMainEvent.summary ?? undefined)
         : CalendarSyncer.SUMMARY_WHEN_NOT_INCLUDING_SOURCE_EVENT_DETAILS,
-      secondaryMainEvent.start!,
-      secondaryMainEvent.end!,
+      {
+        dateTime: secondaryMainEvent.start.dateTime,
+        date: secondaryMainEvent.start.date,
+        timeZone: secondaryMainEvent.start.timeZone,
+      },
+      {
+        dateTime: secondaryMainEvent.end.dateTime,
+        date: secondaryMainEvent.end.date,
+        timeZone: secondaryMainEvent.end.timeZone,
+      },
       secondaryMainEvent.transparency,
       secondaryMainEvent.colorId ??
       this.colorCalculator.getClosestColorId(
@@ -377,8 +389,8 @@ export class CalendarSyncer {
   ) {
     const bufferEventStartTime = bufferType.calculateStartTime(
       // we know the start and end dateTimes are set because we validated that these are not all-day events
-      new Date(primaryMainEvent.start!.dateTime!),
-      new Date(primaryMainEvent.end!.dateTime!),
+      new Date(primaryMainEvent.start.dateTime!),
+      new Date(primaryMainEvent.end.dateTime!),
     );
 
     const eventProperties = this.buildEventProperties(
@@ -386,12 +398,16 @@ export class CalendarSyncer {
         primaryMainEvent.summary ?? "",
         this.includeSourceEventDetails,
       ),
-      { dateTime: bufferEventStartTime.toISOString() },
+      {
+        dateTime: bufferEventStartTime.toISOString(),
+        timeZone: primaryMainEvent.start.timeZone,
+      },
       {
         dateTime: new Date(
           bufferEventStartTime.getTime() +
           BufferType.BUFFER_DURATION_MILLISECONDS,
         ).toISOString(),
+        timeZone: primaryMainEvent.end.timeZone,
       },
       primaryMainEvent.transparency,
       primaryMainEvent.colorId ??
