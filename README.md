@@ -25,6 +25,9 @@ Google Apps script which syncs events from multiple external calendars into anot
     4. Add the following properties:
         1. Property: `PRIMARY_CALENDAR_ID`, Value: Your primary calendar ID
         2. Property: `SECONDARY_CALENDAR_IDS`, Value: Comma-separated list of secondary calendar IDs
+        3. Property: `INCLUDE_SOURCE_EVENT_DETAILS` (optional), Value: `true` or `false` (defaults to `true`)
+            - When `true`: Event summary, description, and location are copied from the source events. Buffer events are titled "Pre-Buffer for [Event Name]" and "Post-Buffer for [Event Name]".
+            - When `false`: Main events are titled "Appointment" with no description or location. Buffer events are titled "Travel Time" with no description or location.
     5. Choose Save script properties.
 13. Set up a trigger.
     1. Open your Apps Script Project: `npm run open`.

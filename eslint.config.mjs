@@ -13,14 +13,13 @@ export default [
       ecmaVersion: "latest",
       sourceType: "module",
       globals: {
-        CalendarApp: "readonly",
+        Calendar: "readonly",
         GoogleAppsScript: "readonly",
         LockService: "readonly",
         Logger: "readonly",
         PropertiesService: "readonly",
         ScriptApp: "readonly",
         Utilities: "readonly",
-        console: "readonly",
       },
     },
     plugins: {

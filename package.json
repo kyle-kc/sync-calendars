@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "description": "Google Apps Script to sync events from multiple calendars",
   "scripts": {
-    "build": "tsc && cp appsscript.json dist/",
+    "build": "esbuild src/main.ts --bundle --platform=neutral --target=es2019 --format=iife --global-name=GoogleAppsScriptBundle --footer:js=\"function main() { GoogleAppsScriptBundle.main(); }\" --outfile=dist/main.js && cp appsscript.json dist/",
     "deploy": "npm run build && clasp deploy",
     "logs": "clasp logs",
     "open": "clasp open",
@@ -14,11 +14,13 @@
     "style:fix": "prettier --write 'src/**/*.ts' && eslint 'src/**/*.ts' --fix"
   },
   "devDependencies": {
+    "@esbuild-plugins/node-globals-polyfill": "^0.2.3",
     "@eslint/js": "^9.37.0",
     "@google/clasp": "^2.4.2",
     "@types/google-apps-script": "^2.0.5",
     "@typescript-eslint/eslint-plugin": "^8.46.0",
     "@typescript-eslint/parser": "^8.46.0",
+    "esbuild": "^0.25.10",
     "eslint": "^9.37.0",
     "eslint-config-prettier": "^10.1.8",
     "prettier": "^3.6.2",
