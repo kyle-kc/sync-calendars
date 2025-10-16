@@ -5,7 +5,7 @@ declare global {
   var main: () => void;
 }
 
-export function main(): void {
+function main(): void {
   new CalendarSyncer().syncCalendars();
 }
 

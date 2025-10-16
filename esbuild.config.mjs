@@ -9,7 +9,6 @@ esbuild
     bundle: true,
     platform: "neutral",
     target: "es2019",
-    format: "iife",
     outdir: "dist",
     plugins: [
       {
