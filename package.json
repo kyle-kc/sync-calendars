@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "description": "Google Apps Script to sync events from multiple calendars",
   "scripts": {
-    "build": "esbuild src/main.ts --bundle --platform=neutral --target=es2019 --format=iife --global-name=GoogleAppsScriptBundle --footer:js=\"function main() { GoogleAppsScriptBundle.main(); }\" --outfile=dist/main.js && cp appsscript.json dist/",
+    "build": "node esbuild.config.mjs",
     "deploy": "npm run build && clasp deploy",
     "logs": "clasp logs",
     "open": "clasp open",

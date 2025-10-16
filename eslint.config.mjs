@@ -7,6 +7,17 @@ export default [
   js.configs.recommended,
   prettier,
   {
+    files: ["*.mjs"],
+    languageOptions: {
+      ecmaVersion: "latest",
+      sourceType: "module",
+      globals: {
+        process: "readonly",
+        console: "readonly",
+      },
+    },
+  },
+  {
     files: ["src/**/*.ts"],
     languageOptions: {
       parser: typescriptParser,
